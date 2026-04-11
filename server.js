@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import axios from "axios";
 
+
 dotenv.config();
 
 const app = express();
@@ -13,7 +14,9 @@ app.use(cors());
 app.use(express.json());
 
 const transporter = nodemailer.createTransport({
-    service: "gmail",
+    service: "smtp.gmail.com",
+    port: 587,
+    secure: false,
     auth: {
         user: process.env.GMAIL_USER,
         pass: process.env.GMAIL_PASS,
