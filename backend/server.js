@@ -3,9 +3,15 @@ import nodemailer from "nodemailer";
 import cors from "cors";
 import dotenv from "dotenv";
 import axios from "axios";
+import path from "path";
+import { fileURLToPath } from "url";
 
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +24,29 @@ const transporter = nodemailer.createTransport({
     auth: {
         user: process.env.GMAIL_USER,
         pass: process.env.GMAIL_PASS,
+    },
+});
+
+const hasValue = (value) => Boolean(String(value || "").trim());
+
+const getConfigStatus = () => ({
+    email: {
+        ready: hasValue(process.env.GMAIL_USER) && hasValue(process.env.GMAIL_PASS),
+        missing: [
+            !hasValue(process.env.GMAIL_USER) && "GMAIL_USER",
+            !hasValue(process.env.GMAIL_PASS) && "GMAIL_PASS",
+        ].filter(Boolean),
+    },
+    sms: {
+        ready: hasValue(process.env.UNISMS_SECRET_KEY),
+        missing: [
+            !hasValue(process.env.UNISMS_SECRET_KEY) && "UNISMS_SECRET_KEY",
+        ].filter(Boolean),
+        senderIdConfigured: hasValue(process.env.UNISMS_SENDER_ID),
+        warnings: [
+            hasValue(process.env.UNISMS_SENDER_ID) &&
+                "UNISMS_SENDER_ID is set. Remove it if the sender ID is not approved in UniSMS.",
+        ].filter(Boolean),
     },
 });
 
@@ -52,30 +81,45 @@ async function processJob(job) {
 
     for (const user of users) {
         let emailStatus = "skipped";
+        let emailError = null;
         let smsStatus = "skipped";
         let smsError = null;
 
         if ((channel === "email" || channel === "both") && user.email) {
-            try {
-                await transporter.sendMail({
-                    from: process.env.GMAIL_USER,
-                    to: user.email,
-                    subject: message.title,
-                    text: message.content,
-                });
-                emailStatus = "sent";
-            } catch (err) {
-                console.error("Email failed:", err?.message || err);
+            if (!getConfigStatus().email.ready) {
                 emailStatus = "failed";
+                emailError = "Email is not configured. Set GMAIL_USER and GMAIL_PASS on the backend.";
+            } else {
+                try {
+                    await transporter.sendMail({
+                        from: process.env.GMAIL_USER,
+                        to: user.email,
+                        subject: message.title,
+                        text: message.content,
+                    });
+                    emailStatus = "sent";
+                } catch (err) {
+                    emailError = err?.message || "Unknown email error";
+                    console.error("Email failed:", emailError);
+                    emailStatus = "failed";
+                }
             }
         }
 
         if ((channel === "sms" || channel === "both") && user.mobile) {
-            const recipient = normalizePhilippineMobile(user.mobile);
-            if (recipient) {
-                recipients.push(recipient);
-                recipientIndices.push(results.length);
-                smsStatus = "pending";
+            if (!getConfigStatus().sms.ready) {
+                smsStatus = "failed";
+                smsError = "SMS is not configured. Set UNISMS_SECRET_KEY on the backend.";
+            } else {
+                const recipient = normalizePhilippineMobile(user.mobile);
+                if (recipient) {
+                    recipients.push(recipient);
+                    recipientIndices.push(results.length);
+                    smsStatus = "pending";
+                } else {
+                    smsStatus = "failed";
+                    smsError = "Invalid mobile number.";
+                }
             }
         }
 
@@ -84,6 +128,7 @@ async function processJob(job) {
             email: user.email,
             mobile: user.mobile,
             emailStatus,
+            emailError,
             smsStatus,
             smsError,
         });
@@ -91,13 +136,13 @@ async function processJob(job) {
 
     if (recipients.length > 0 && (channel === "sms" || channel === "both")) {
         try {
-            await axios.post(
-                "https://unismsapi.com/blast",
+            const smsResponse = await axios.post(
+                "https://unismsapi.com/api/blast",
                 {
                     metadata: {
                         campaign: process.env.UNISMS_CAMPAIGN || `announcement_${Date.now()}`,
                     },
-                    content: `${message.title}\n${message.content}`,
+                    content: `${message.title}\n${message.content}`.slice(0, 160),
                     ...(process.env.UNISMS_SENDER_ID ? { sender_id: process.env.UNISMS_SENDER_ID } : {}),
                     recipients,
                 },
@@ -115,6 +160,7 @@ async function processJob(job) {
 
             recipientIndices.forEach((resultIndex) => {
                 results[resultIndex].smsStatus = "sent";
+                results[resultIndex].smsReference = smsResponse.data?.blast_id || null;
             });
         } catch (err) {
             const smsError = getSmsErrorMessage(err);
@@ -135,9 +181,38 @@ async function processJob(job) {
     return results;
 }
 
+const summarizeResults = (results) => {
+    const requested = {
+        email: results.filter((result) => result.emailStatus !== "skipped").length,
+        sms: results.filter((result) => result.smsStatus !== "skipped").length,
+    };
+    const sent = {
+        email: results.filter((result) => result.emailStatus === "sent").length,
+        sms: results.filter((result) => result.smsStatus === "sent").length,
+    };
+    const failures = results.flatMap((result) => [
+        result.emailStatus === "failed" && result.emailError,
+        result.smsStatus === "failed" && result.smsError,
+    ].filter(Boolean));
+
+    return {
+        requested,
+        sent,
+        failures,
+        ok: failures.length === 0 && sent.email + sent.sms > 0,
+    };
+};
+
 // In-memory queue (simple): enqueue jobs and process them in background
 const queue = [];
 let nextJobId = 1;
+
+app.get("/health", (req, res) => {
+    res.json({
+        ok: true,
+        config: getConfigStatus(),
+    });
+});
 
 app.post("/enqueue", async (req, res) => {
     try {
@@ -180,8 +255,9 @@ app.post("/send-notification", async (req, res) => {
 
         const job = { id: nextJobId++, users, message, channel };
         const results = await processJob(job);
+        const summary = summarizeResults(results);
 
-        res.json({ results });
+        res.status(summary.ok ? 200 : 502).json({ results, summary });
     } catch (err) {
         const details = err.response?.data || err.message || null;
         console.error("Send error:", err.message || err, details);

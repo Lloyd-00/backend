@@ -200,7 +200,9 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                     };
                     errorDetail = JSON.stringify(failureData, null, 2);
                     console.error("Notification send failed", failureData);
-                    throw new Error(data.error || responseText || `Failed to send (${res.status})`);
+                    if (!Array.isArray(data.results)) {
+                        throw new Error(data.error || responseText || `Failed to send (${res.status})`);
+                    }
                 }
 
                 const results = data.results || [];
@@ -208,18 +210,22 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                     email: results.filter((result) => result.emailStatus === "sent").length,
                     sms: results.filter((result) => result.smsStatus === "sent").length
                 };
-                const errors = results
-                    .filter((result) => result.smsStatus === "failed" && result.smsError)
-                    .slice(0, 3)
-                    .map((result) => result.smsError);
+                const errors = [...new Set(results.flatMap((result) => [
+                    result.emailStatus === "failed" && result.emailError,
+                    result.smsStatus === "failed" && result.smsError,
+                ].filter(Boolean)))].slice(0, 3);
                 const requestedTotal = requested.email + requested.sms;
                 const sentTotal = sent.email + sent.sms;
                 const errorDetailFromResults = errors.length > 0 ? errors.join("\n") : null;
+                const status =
+                    sentTotal === 0
+                        ? "failed"
+                        : requestedTotal > 0 && sentTotal === requestedTotal
+                            ? "successful"
+                            : "partially successful";
 
                 updateQueueItem(id, {
-                    status: requestedTotal > 0 && sentTotal === requestedTotal
-                        ? "successful"
-                        : "partially successful",
+                    status,
                     sent,
                     errors,
                     errorDetail: errorDetail || errorDetailFromResults
@@ -232,7 +238,7 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                     `Request URL: ${sendUrl}\nRequest body: ${requestBody}\n\nError: ${detailText}`;
                 setErrorDetails(fullDetail);
                 updateQueueItem(id, {
-                    status: "partially successful",
+                    status: "failed",
                     errors: [detailText || "Notification request failed"],
                     errorDetail: fullDetail,
                 });

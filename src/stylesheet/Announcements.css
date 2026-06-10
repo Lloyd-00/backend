@@ -1,0 +1,210 @@
+
+.cardContainer .message-card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:8px;margin-bottom:12px}
+.message-card .message-header{display:flex;justify-content:space-between;align-items:center}
+.message-card h3{margin:0 0 8px 0}
+.message-actions{display:flex;gap:8px;margin-top:8px}
+.message-actions button{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:6px 10px;border-radius:6px;color:var(--muted);cursor:pointer}
+
+.announcementWorkspace {
+    align-items: start;
+    background: #dedede;
+    border-radius: 20px;
+    display: grid;
+    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    padding: 20px;
+    position: relative;
+    top: -20px;
+}
+
+.announcementWorkspace.queueClosed {
+    grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.announcementList {
+    background: transparent;
+    min-width: 0;
+    padding: 0;
+    top: 0;
+}
+
+.sendQueueSidebar {
+    background: #fff;
+    border: 1px solid #c9c9c9;
+    border-radius: 10px;
+    color: #232323;
+    min-height: 220px;
+    padding: 16px;
+    position: sticky;
+    top: 12px;
+}
+
+.queueClosed .sendQueueSidebar {
+    align-self: stretch;
+    padding: 0;
+}
+
+.sendQueueSidebar h3 {
+    color: #232323;
+    margin: 0 0 12px;
+}
+
+.queueToggle {
+    background: #1d244b;
+    border: 1px solid #1d244b;
+    border-radius: 999px;
+    color: #fff;
+    cursor: pointer;
+    height: 28px;
+    left: -14px;
+    line-height: 1;
+    position: absolute;
+    top: 14px;
+    width: 28px;
+}
+
+.queueEmpty {
+    color: #5b5b5b;
+    font-size: 14px;
+}
+
+.queueList {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.queueItem {
+    border: 1px solid #dedede;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.queueHeader {
+    align-items: start;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.queueHeader strong {
+    color: #232323;
+    font-size: 14px;
+    line-height: 1.25;
+}
+
+.queueItem p,
+.queueCounts {
+    color: #5b5b5b;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+.queueCounts {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.queueError {
+    color: #b42318;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.queueStatus {
+    border-radius: 999px;
+    color: #fff;
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 4px 8px;
+    text-transform: capitalize;
+}
+
+.queueStatus.queued {
+    background: #667085;
+}
+
+.queueStatus.sending {
+    background: #1d244b;
+}
+
+.queueStatus.successful {
+    background: #308d43;
+}
+
+.queueStatus.partially-successful {
+    background: #b54708;
+}
+
+.queueStatus.failed {
+    background: #b42318;
+}
+
+.queueErrorButton {
+    background: transparent;
+    border: 1px solid #b42318;
+    border-radius: 6px;
+    color: #b42318;
+    cursor: pointer;
+    font-size: 12px;
+    margin-top: 8px;
+    padding: 6px 10px;
+}
+
+.errorModalOverlay {
+    align-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    bottom: 0;
+    display: flex;
+    justify-content: center;
+    left: 0;
+    overflow: auto;
+    padding: 24px;
+    position: fixed;
+    right: 0;
+    top: 0;
+    z-index: 9999;
+}
+
+.errorModalContent {
+    background: #fff;
+    border-radius: 16px;
+    max-width: 640px;
+    width: 100%;
+    padding: 24px;
+    box-shadow: 0 24px 56px rgba(0, 0, 0, 0.18);
+}
+
+.errorModalContent h3 {
+    margin: 0 0 16px;
+}
+
+.errorModalTextarea {
+    width: 100%;
+    min-height: 220px;
+    border: 1px solid #d0d0d0;
+    border-radius: 12px;
+    padding: 12px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 16px;
+}
+
+@media (width <= 900px) {
+    .announcementWorkspace,
+    .announcementWorkspace.queueClosed {
+        grid-template-columns: 1fr;
+    }
+
+    .sendQueueSidebar {
+        position: relative;
+        top: 0;
+    }
+
+    .queueClosed .sendQueueSidebar {
+        min-height: 36px;
+    }
+}
