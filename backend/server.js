@@ -168,15 +168,27 @@ app.post("/send-notification", async (req, res) => {
     try {
         const { users, message, channel = "both" } = req.body;
 
-        if (!Array.isArray(users) || !message) return res.status(400).json({ error: "Invalid payload" });
+        console.log("/send-notification payload", {
+            userCount: Array.isArray(users) ? users.length : null,
+            hasMessage: Boolean(message),
+            channel,
+        });
+
+        if (!Array.isArray(users) || !message) {
+            return res.status(400).json({ error: "Invalid payload" });
+        }
 
         const job = { id: nextJobId++, users, message, channel };
         const results = await processJob(job);
 
         res.json({ results });
     } catch (err) {
-        console.error("Send error:", err);
-        res.status(500).json({ error: "Failed to send notifications" });
+        const details = err.response?.data || err.message || null;
+        console.error("Send error:", err.message || err, details);
+        res.status(500).json({
+            error: err.message || "Failed to send notifications",
+            details,
+        });
     }
 });
 

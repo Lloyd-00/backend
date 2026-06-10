@@ -18,6 +18,7 @@ function Announcements({ profile, memberships = [], canManage = false }) {
     const [organizationFilter, setOrganizationFilter] = useState("default");
     const [sendQueue, setSendQueue] = useState([]);
     const [queueExpanded, setQueueExpanded] = useState(true);
+    const [errorDetails, setErrorDetails] = useState("");
 
     const selectedIds = useMemo(
         () => getFilterIds(organizationFilter, profile, memberships),
@@ -136,6 +137,7 @@ function Announcements({ profile, memberships = [], canManage = false }) {
             requested,
             sent: { email: 0, sms: 0 },
             errors: [],
+            errorDetail: null,
             createdAt: new Date().toISOString()
         };
 
@@ -149,6 +151,26 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                 ? `${backendBase.replace(/\/$/, "")}/send-notification`
                 : "/send-notification";
 
+            console.log("Announcement send URL debug", {
+                backendBase,
+                sendUrl,
+                envBackend: import.meta.env.VITE_BACKEND_URL,
+            });
+
+            const requestBody = JSON.stringify({
+                channel,
+                users: selectedUsers.map((user) => ({
+                    email: user.email,
+                    mobile: user.mobile,
+                    name: user.username || user.name || user.email,
+                })),
+                message: {
+                    title: selectedMessage.title,
+                    content: selectedMessage.content,
+                },
+            });
+
+            let errorDetail = null;
             try {
                 const res = await fetch(sendUrl, {
                     method: "POST",
@@ -156,18 +178,7 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                         "Content-Type": "application/json",
                         Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
                     },
-                    body: JSON.stringify({
-                        channel,
-                        users: selectedUsers.map((user) => ({
-                            email: user.email,
-                            mobile: user.mobile,
-                            name: user.username || user.name || user.email,
-                        })),
-                        message: {
-                            title: selectedMessage.title,
-                            content: selectedMessage.content,
-                        },
-                    }),
+                    body: requestBody,
                 });
 
                 const responseText = await res.text();
@@ -178,7 +189,19 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                     data = { error: responseText };
                 }
 
-                if (!res.ok) throw new Error(data.error || responseText || "Failed to send");
+                if (!res.ok) {
+                    const failureData = {
+                        requestUrl: sendUrl,
+                        requestBody: JSON.parse(requestBody),
+                        status: res.status,
+                        statusText: res.statusText,
+                        headers: Object.fromEntries(res.headers.entries()),
+                        body: data,
+                    };
+                    errorDetail = JSON.stringify(failureData, null, 2);
+                    console.error("Notification send failed", failureData);
+                    throw new Error(data.error || responseText || `Failed to send (${res.status})`);
+                }
 
                 const results = data.results || [];
                 const sent = {
@@ -191,19 +214,27 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                     .map((result) => result.smsError);
                 const requestedTotal = requested.email + requested.sms;
                 const sentTotal = sent.email + sent.sms;
+                const errorDetailFromResults = errors.length > 0 ? errors.join("\n") : null;
 
                 updateQueueItem(id, {
                     status: requestedTotal > 0 && sentTotal === requestedTotal
                         ? "successful"
                         : "partially successful",
                     sent,
-                    errors
+                    errors,
+                    errorDetail: errorDetail || errorDetailFromResults
                 });
             } catch (err) {
-                console.error(err);
+                console.error("Notification request error", err);
+                const detailText = err instanceof Error ? err.message : String(err);
+                const fullDetail =
+                    errorDetail ||
+                    `Request URL: ${sendUrl}\nRequest body: ${requestBody}\n\nError: ${detailText}`;
+                setErrorDetails(fullDetail);
                 updateQueueItem(id, {
                     status: "partially successful",
-                    errors: [err.message || "Notification request failed"]
+                    errors: [detailText || "Notification request failed"],
+                    errorDetail: fullDetail,
                 });
             }
         }, 250);
@@ -296,6 +327,15 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                                                 {item.errors.length > 0 && (
                                                     <p className="queueError">{item.errors[0]}</p>
                                                 )}
+                                                {(item.errorDetail || item.errors.length > 0) && (
+                                                    <button
+                                                        type="button"
+                                                        className="queueErrorButton"
+                                                        onClick={() => setErrorDetails(item.errorDetail || item.errors.join("\n"))}
+                                                    >
+                                                        View error details
+                                                    </button>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
@@ -315,6 +355,25 @@ function Announcements({ profile, memberships = [], canManage = false }) {
                     onQueueSend={queueAnnouncementSend}
                     onClose={() => setShowSendModal(false)}
                 />
+            )}
+            {errorDetails && (
+                <div className="errorModalOverlay" role="dialog" aria-modal="true">
+                    <div className="errorModalContent">
+                        <h3>Error details</h3>
+                        <textarea
+                            readOnly
+                            value={errorDetails}
+                            className="errorModalTextarea"
+                        />
+                        <button
+                            type="button"
+                            className="general-button"
+                            onClick={() => setErrorDetails("")}
+                        >
+                            Close
+                        </button>
+                    </div>
+                </div>
             )}
             {showForm && (
                 <FormAnnouncementModal
