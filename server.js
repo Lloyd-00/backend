@@ -21,16 +21,38 @@ const transporter = nodemailer.createTransport({
     },
 });
 
+const normalizePhilippineMobile = (mobile) => {
+    if (!mobile) return "";
+
+    const cleaned = String(mobile).trim().replace(/[\s()-]/g, "");
+
+    if (cleaned.startsWith("+")) return cleaned;
+    if (cleaned.startsWith("09")) return `+63${cleaned.slice(1)}`;
+    if (cleaned.startsWith("9") && cleaned.length === 10) return `+63${cleaned}`;
+    if (cleaned.startsWith("639")) return `+${cleaned}`;
+
+    return cleaned;
+};
+
+const getSmsErrorMessage = (err) => {
+    const data = err.response?.data;
+    if (typeof data === "string") return data;
+    if (data?.message) return data.message;
+    if (data?.error) return data.error;
+    return err.message || "Unknown SMS error";
+};
+
 app.post("/send-notification", async (req, res) => {
-    const { users, message } = req.body;
+    const { users, message, channel = "both" } = req.body;
 
     const results = [];
 
     for (const user of users) {
         let emailStatus = "skipped";
         let smsStatus = "skipped";
+        let smsError = null;
 
-        if (user.email) {
+        if ((channel === "email" || channel === "both") && user.email) {
             try {
                 await transporter.sendMail({
                     from: process.env.GMAIL_USER,
@@ -45,24 +67,38 @@ app.post("/send-notification", async (req, res) => {
             }
         }
 
-        if (user.mobile) {
+        if ((channel === "sms" || channel === "both") && user.mobile) {
+            const recipient = normalizePhilippineMobile(user.mobile);
+
             try {
                 await axios.post(
                     "https://unismsapi.com/api/sms",
                     {
-                        recipient: user.mobile,
+                        recipient,
                         content: `${message.title}\n${message.content}`,
+                        ...(process.env.UNISMS_SENDER_ID
+                            ? { sender_id: process.env.UNISMS_SENDER_ID }
+                            : {}),
                     },
                     {
                         auth: {
                             username: process.env.UNISMS_SECRET_KEY,
                             password: "",
                         },
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        timeout: 15000,
                     }
                 );
                 smsStatus = "sent";
             } catch (err) {
-                console.error("SMS failed:", err.response?.data || err.message);
+                smsError = getSmsErrorMessage(err);
+                console.error("SMS failed:", {
+                    recipient,
+                    status: err.response?.status,
+                    error: smsError,
+                });
                 smsStatus = "failed";
             }
         }
@@ -73,6 +109,7 @@ app.post("/send-notification", async (req, res) => {
             mobile: user.mobile,
             emailStatus,
             smsStatus,
+            smsError,
         });
     }
 
