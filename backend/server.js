@@ -3,6 +3,8 @@ import nodemailer from "nodemailer";
 import cors from "cors";
 import dotenv from "dotenv";
 import axios from "axios";
+import dns from "dns";
+import net from "net";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -18,16 +20,43 @@ const PORT = process.env.PORT || 3000;
 const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
+const SMTP_FORCE_IPV4 = String(process.env.SMTP_FORCE_IPV4 || "true").toLowerCase() !== "false";
+
+dns.setDefaultResultOrder?.("ipv4first");
+
+const resolveSmtpConnectionHost = async () => {
+    if (!SMTP_FORCE_IPV4 || net.isIP(SMTP_HOST)) return SMTP_HOST;
+
+    try {
+        const addresses = await dns.promises.resolve4(SMTP_HOST);
+        return addresses[0] || SMTP_HOST;
+    } catch (err) {
+        console.warn("Could not resolve SMTP IPv4 address with resolve4:", err?.message || err);
+    }
+
+    try {
+        const result = await dns.promises.lookup(SMTP_HOST, { family: 4 });
+        return result.address || SMTP_HOST;
+    } catch (err) {
+        console.warn("Could not resolve SMTP IPv4 address with lookup, falling back to host:", err?.message || err);
+        return SMTP_HOST;
+    }
+};
+
+const SMTP_CONNECTION_HOST = await resolveSmtpConnectionHost();
 
 app.use(cors());
 app.use(express.json());
 
 const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
+    host: SMTP_CONNECTION_HOST,
     port: SMTP_PORT,
     secure: SMTP_SECURE,
     requireTLS: !SMTP_SECURE,
-    family: 4,
+    servername: SMTP_HOST,
+    tls: {
+        servername: SMTP_HOST,
+    },
     auth: {
         user: process.env.GMAIL_USER,
         pass: process.env.GMAIL_PASS,
@@ -41,9 +70,10 @@ const getConfigStatus = () => ({
         ready: hasValue(process.env.GMAIL_USER) && hasValue(process.env.GMAIL_PASS),
         smtp: {
             host: SMTP_HOST,
+            connectionHost: SMTP_CONNECTION_HOST,
             port: SMTP_PORT,
             secure: SMTP_SECURE,
-            family: 4,
+            forceIPv4: SMTP_FORCE_IPV4,
         },
         missing: [
             !hasValue(process.env.GMAIL_USER) && "GMAIL_USER",
