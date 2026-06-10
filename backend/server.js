@@ -92,7 +92,7 @@ async function processJob(job) {
     if (recipients.length > 0 && (channel === "sms" || channel === "both")) {
         try {
             await axios.post(
-                "https://unismsapi.com/api/blast",
+                "https://unismsapi.com/blast",
                 {
                     metadata: {
                         campaign: process.env.UNISMS_CAMPAIGN || `announcement_${Date.now()}`,
