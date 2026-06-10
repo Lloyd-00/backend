@@ -17,6 +17,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || "smtp";
 const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
@@ -65,9 +66,19 @@ const transporter = nodemailer.createTransport({
 
 const hasValue = (value) => Boolean(String(value || "").trim());
 
+const isGmailApiReady = () =>
+    hasValue(process.env.GMAIL_USER) &&
+    hasValue(process.env.GMAIL_CLIENT_ID) &&
+    hasValue(process.env.GMAIL_CLIENT_SECRET) &&
+    hasValue(process.env.GMAIL_REFRESH_TOKEN);
+
+const isSmtpReady = () =>
+    hasValue(process.env.GMAIL_USER) && hasValue(process.env.GMAIL_PASS);
+
 const getConfigStatus = () => ({
     email: {
-        ready: hasValue(process.env.GMAIL_USER) && hasValue(process.env.GMAIL_PASS),
+        provider: EMAIL_PROVIDER,
+        ready: EMAIL_PROVIDER === "gmail_api" ? isGmailApiReady() : isSmtpReady(),
         smtp: {
             host: SMTP_HOST,
             connectionHost: SMTP_CONNECTION_HOST,
@@ -77,7 +88,10 @@ const getConfigStatus = () => ({
         },
         missing: [
             !hasValue(process.env.GMAIL_USER) && "GMAIL_USER",
-            !hasValue(process.env.GMAIL_PASS) && "GMAIL_PASS",
+            EMAIL_PROVIDER === "gmail_api" && !hasValue(process.env.GMAIL_CLIENT_ID) && "GMAIL_CLIENT_ID",
+            EMAIL_PROVIDER === "gmail_api" && !hasValue(process.env.GMAIL_CLIENT_SECRET) && "GMAIL_CLIENT_SECRET",
+            EMAIL_PROVIDER === "gmail_api" && !hasValue(process.env.GMAIL_REFRESH_TOKEN) && "GMAIL_REFRESH_TOKEN",
+            EMAIL_PROVIDER !== "gmail_api" && !hasValue(process.env.GMAIL_PASS) && "GMAIL_PASS",
         ].filter(Boolean),
     },
     sms: {
@@ -114,6 +128,77 @@ const getSmsErrorMessage = (err) => {
     return err.message || "Unknown SMS error";
 };
 
+const encodeBase64Url = (value) =>
+    Buffer.from(value)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+
+const createEmailMessage = ({ from, to, subject, text }) => {
+    const headers = [
+        `From: ${from}`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain; charset=UTF-8",
+    ];
+
+    return encodeBase64Url(`${headers.join("\r\n")}\r\n\r\n${text}`);
+};
+
+const getGmailAccessToken = async () => {
+    const response = await axios.post(
+        "https://oauth2.googleapis.com/token",
+        new URLSearchParams({
+            client_id: process.env.GMAIL_CLIENT_ID,
+            client_secret: process.env.GMAIL_CLIENT_SECRET,
+            refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+            grant_type: "refresh_token",
+        }),
+        {
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            timeout: 15000,
+        }
+    );
+
+    return response.data.access_token;
+};
+
+const sendEmail = async ({ to, subject, text }) => {
+    if (EMAIL_PROVIDER === "gmail_api") {
+        const accessToken = await getGmailAccessToken();
+        const raw = createEmailMessage({
+            from: process.env.GMAIL_USER,
+            to,
+            subject,
+            text,
+        });
+
+        await axios.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            { raw },
+            {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                timeout: 15000,
+            }
+        );
+        return;
+    }
+
+    await transporter.sendMail({
+        from: process.env.GMAIL_USER,
+        to,
+        subject,
+        text,
+    });
+};
+
 // Helper to process a single job (send to users according to channel)
 async function processJob(job) {
     const { users, message, channel } = job;
@@ -131,18 +216,22 @@ async function processJob(job) {
         if ((channel === "email" || channel === "both") && user.email) {
             if (!getConfigStatus().email.ready) {
                 emailStatus = "failed";
-                emailError = "Email is not configured. Set GMAIL_USER and GMAIL_PASS on the backend.";
+                emailError = `Email is not configured for ${EMAIL_PROVIDER}. Missing: ${getConfigStatus().email.missing.join(", ")}`;
             } else {
                 try {
-                    await transporter.sendMail({
-                        from: process.env.GMAIL_USER,
+                    await sendEmail({
                         to: user.email,
                         subject: message.title,
                         text: message.content,
                     });
                     emailStatus = "sent";
                 } catch (err) {
-                    emailError = err?.message || "Unknown email error";
+                    emailError =
+                        err.response?.data?.error_description ||
+                        err.response?.data?.error?.message ||
+                        err.response?.data?.error ||
+                        err?.message ||
+                        "Unknown email error";
                     console.error("Email failed:", emailError);
                     emailStatus = "failed";
                 }
