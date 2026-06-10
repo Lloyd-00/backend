@@ -15,12 +15,19 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
 
 app.use(cors());
 app.use(express.json());
 
 const transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    requireTLS: !SMTP_SECURE,
+    family: 4,
     auth: {
         user: process.env.GMAIL_USER,
         pass: process.env.GMAIL_PASS,
@@ -32,6 +39,12 @@ const hasValue = (value) => Boolean(String(value || "").trim());
 const getConfigStatus = () => ({
     email: {
         ready: hasValue(process.env.GMAIL_USER) && hasValue(process.env.GMAIL_PASS),
+        smtp: {
+            host: SMTP_HOST,
+            port: SMTP_PORT,
+            secure: SMTP_SECURE,
+            family: 4,
+        },
         missing: [
             !hasValue(process.env.GMAIL_USER) && "GMAIL_USER",
             !hasValue(process.env.GMAIL_PASS) && "GMAIL_PASS",
